@@ -20,14 +20,8 @@ SERVER = "https://zentracloud.eu"
 TABLE_NAME = "Zentra_SiteA"
 
 
-
 BATCH_SIZE = 500
-
-# ── How far back to backfill ──────────────────────────────────────────────────
-BACKFILL_START = datetime(2026, 2, 1, tzinfo=timezone.utc)  # adjust as needed
-CHUNK_DAYS     = 7   # fetch N days at a time to avoid API timeouts
-
-
+LOOKBACK_HOURS = 6
 
 # ── Zentra API ────────────────────────────────────────────────────────────────
 
@@ -42,11 +36,11 @@ def parse_df_payload(payload):
 
 
 def fetch_chunk(sn: str, start: datetime, end: datetime) -> pd.DataFrame:
-    url    = f"{SERVER}/api/v4/get_readings/"
+    url = f"{SERVER}/api/v4/get_readings/"
     params = {
         "device_sn": sn,
         "start_date": start.strftime("%Y-%m-%d %H:%M:%S"),
-        "end_date":   end.strftime("%Y-%m-%d %H:%M:%S"),
+        "end_date": end.strftime("%Y-%m-%d %H:%M:%S"),
         "output_format": "df",
         "per_page": 1000,
         "page_num": 1,
@@ -61,7 +55,7 @@ def fetch_chunk(sn: str, start: datetime, end: datetime) -> pd.DataFrame:
                 return pd.DataFrame()
             return parse_df_payload(payload["data"])
         if "Exceeded request limit" in res.text:
-            print("  Rate limit hit, waiting 60 s...")
+            print("Rate limit hit, waiting 60 s...")
             time.sleep(60)
             continue
         raise Exception(f"API error: {res.text}")
@@ -76,7 +70,7 @@ def normalize_col(name: str) -> str:
 def pivot_to_wide(df: pd.DataFrame) -> pd.DataFrame:
     df = df[["timestamp_utc", "measurement", "value"]].copy()
     df["measurement"] = df["measurement"].map(normalize_col)
-    df["value"]       = pd.to_numeric(df["value"], errors="coerce")
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
     wide = df.pivot_table(
         index="timestamp_utc",
@@ -86,7 +80,7 @@ def pivot_to_wide(df: pd.DataFrame) -> pd.DataFrame:
     ).reset_index()
 
     wide.columns.name = None
-    wide["device_sn"]   = DEVICE_SN
+    wide["device_sn"] = DEVICE_SN
     wide["measured_at"] = pd.to_datetime(
         wide["timestamp_utc"], unit="s", utc=True
     ).dt.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -106,15 +100,24 @@ _dropped_cols: set[str] = set()
 
 
 def write_wide(wide: pd.DataFrame) -> int:
-    # Drop any columns we've already learned the table doesn't have
     if _dropped_cols:
         wide = wide.drop(columns=[c for c in _dropped_cols if c in wide.columns])
 
     records = [
-        {k: (None if (v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v)))) else v)
-         for k, v in row.items()}
+        {
+            k: (
+                None
+                if (
+                    v is None
+                    or (isinstance(v, float) and (math.isnan(v) or math.isinf(v)))
+                )
+                else v
+            )
+            for k, v in row.items()
+        }
         for row in wide.to_dict(orient="records")
     ]
+
     for batch in chunked(records, BATCH_SIZE):
         while True:
             try:
@@ -123,12 +126,11 @@ def write_wide(wide: pd.DataFrame) -> int:
                 ).execute()
                 break
             except APIError as e:
-                # PGRST204: column not found in schema cache
                 if e.code == "PGRST204":
                     m = re.search(r"'([^']+)' column", e.message)
                     if m:
                         col = m.group(1)
-                        print(f"  (column '{col}' not in table — dropping it)")
+                        print(f"Column '{col}' not in table — dropping it")
                         _dropped_cols.add(col)
                         batch = [{k: v for k, v in row.items() if k != col} for row in batch]
                         continue
@@ -139,38 +141,25 @@ def write_wide(wide: pd.DataFrame) -> int:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    end_date   = datetime.now(timezone.utc)
-    chunk_start = BACKFILL_START
-    total_written = 0
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(hours=LOOKBACK_HOURS)
 
-    # Build list of chunks upfront so we can show progress
-    chunks = []
-    while chunk_start < end_date:
-        chunk_end = min(chunk_start + timedelta(days=CHUNK_DAYS), end_date)
-        chunks.append((chunk_start, chunk_end))
-        chunk_start = chunk_end
+    print(f"Fetching last {LOOKBACK_HOURS} hours: {start_date} → {end_date}")
 
-    print(f"Backfilling {len(chunks)} chunks of {CHUNK_DAYS}d "
-          f"from {BACKFILL_START.date()} → {end_date.date()}\n")
+    df = fetch_chunk(DEVICE_SN, start_date, end_date)
 
-    for i, (start, end) in enumerate(chunks, 1):
-        label = f"[{i}/{len(chunks)}] {start.date()} → {end.date()}"
-        print(f"{label} — fetching...", end=" ", flush=True)
+    if df.empty:
+        print("No data, skipping")
+        return
 
-        df = fetch_chunk(DEVICE_SN, start, end)
+    wide = pivot_to_wide(df)
+    written = write_wide(wide)
 
-        if df.empty:
-            print("no data, skipping")
-            continue
+    print(f"Done. Rows written: {written}")
 
-        wide    = pivot_to_wide(df)
-        written = write_wide(wide)
-        total_written += written
-        print(f"{written} rows written (total: {total_written})")
 
-        time.sleep(1)  # be polite to the API
-
-    print(f"\nDone. Total rows written: {total_written}")
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
