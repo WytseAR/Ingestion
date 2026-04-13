@@ -1,0 +1,46 @@
+name: Fetch SIMBA data to Supabase
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"               # elke dag 05:00 UTC
+  workflow_dispatch:
+
+jobs:
+  fetch-and-load:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests pandas supabase
+
+      - name: Run Site A
+        env:
+          SIMBA_USERNAME: ${{ secrets.SIMBA_USERNAME }}
+          SIMBA_PASSWORD: ${{ secrets.SIMBA_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python ingest_SIMBA_siteA.py
+
+      - name: Run Site C
+        env:
+          SIMBA_USERNAME: ${{ secrets.SIMBA_USERNAME }}
+          SIMBA_PASSWORD: ${{ secrets.SIMBA_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python ingest_SIMBA_siteC.py
+
+      - name: Run Site E
+        env:
+          SIMBA_USERNAME: ${{ secrets.SIMBA_USERNAME }}
+          SIMBA_PASSWORD: ${{ secrets.SIMBA_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python ingest_SIMBA_siteE.py
