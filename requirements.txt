@@ -1,0 +1,9 @@
+streamlit
+supabase
+pandas
+plotly
+numpy
+dotenv
+requests
+nbformat
+ipykernel
