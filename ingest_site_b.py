@@ -6,7 +6,7 @@ from supabase import create_client
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_SECRET_KEY"]
 API_KEY = os.environ["CRYOSPHERE_API_KEY"]
-DEPLOYMENT_ID = "e21fb253-349f-4072-a371-7ca47693cb2f"
+DEPLOYMENT_ID = "d49193fa-8372-4375-b4f1-fa532b8d4937"
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
