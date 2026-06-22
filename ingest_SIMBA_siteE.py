@@ -50,6 +50,25 @@ def chunked(items, size=500):
     for i in range(0, len(items), size):
         yield items[i:i + size]
 
+def dedupe_payload(records, key_fields=("deployment_id", "time_stamp"), ts_key="measured_at"):
+    """Deduplicate on the upsert conflict key, keeping the newest row by measured_at.
+ 
+    Postgres rejects an ON CONFLICT DO UPDATE that touches the same key twice in
+    one batch, so duplicates must be removed before upserting. Logs how many were
+    dropped so structural duplication at the source stays visible.
+    """
+    seen = {}
+    dropped = 0
+    for r in records:
+        k = tuple(r.get(f) for f in key_fields)
+        if k not in seen or (r.get(ts_key) or "") > (seen[k].get(ts_key) or ""):
+            if k in seen:
+                dropped += 1
+            seen[k] = r
+        else:
+            dropped += 1
+    print(f"Dedupe: {len(records)} -> {len(seen)} rows ({dropped} duplicates removed)")
+    return list(seen.values())
 
 def main():
     simba_url = "https://simba.sams-enterprise.com/data/include/archive.php"
@@ -75,11 +94,11 @@ def main():
     unit = "ar0104"
     tbl = "tdp"
 
-    sdt_str = '2026-02-14 17:00:00'
-    edt_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
-
+    sdt_str = '2026-02-13 16:00:00'
+    edt_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+ 
     output_file = "/tmp/simba.csv"
-
+ 
     download_csv_with_curl(
         url=simba_url,
         output_file=output_file,
@@ -91,52 +110,61 @@ def main():
         sdt=sdt_str,
         edt=edt_str,
     )
-
+ 
     with open(output_file, "r", encoding="utf-8", errors="replace") as f:
         preview = f.read(500)
         print("File preview:")
         print(preview)
-
+ 
     if "Incorrect Username or Password" in preview:
         raise ValueError(
             "SIMBA authentication failed. Check SIMBA_USERNAME and SIMBA_PASSWORD secrets."
         )
-
+ 
     rows = parse_csv(output_file)
-
+ 
     print("CSV row count:", len(rows))
     if not rows:
         raise ValueError(f"No rows returned from SIMBA for {sdt_str} to {edt_str}")
-
+ 
     print("CSV columns:", list(rows[0].keys()))
     print("First row sample:", rows[0])
-
+ 
+    ingested_at = datetime.now(timezone.utc).isoformat()
+ 
     payload_rows = []
     for row in rows:
         payload_rows.append({
-            "deployment_id": "SiteE",
+            "deployment_id": "SiteA",
             "time_stamp": row.get("MOMSN"),
             "measured_at": row.get("Send Time"),
             "filename": os.path.basename(output_file),
             "raw_payload": row,
-            "ingested_at": datetime.utcnow().isoformat(),
+            "ingested_at": ingested_at,
         })
-
+ 
     print("Prepared rows:", len(payload_rows))
+ 
+    payload_rows = dedupe_payload(payload_rows)
+ 
+    if not payload_rows:
+        raise ValueError("No rows left after deduplication")
+ 
     print("First payload row:", payload_rows[0])
-
+ 
     for i, batch in enumerate(chunked(payload_rows, 500), start=1):
         result = (
             supabase
-            .table("SIMBA_SiteE")
+            .table("SIMBA_SiteA")
             .upsert(batch, on_conflict="deployment_id,time_stamp")
             .execute()
         )
         print(f"Upserted batch {i}, size {len(batch)}")
         print(result)
-
+ 
     print(f"{len(payload_rows)} rows loaded into Supabase.")
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
+ 
