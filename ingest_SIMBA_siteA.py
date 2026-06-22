@@ -1,10 +1,10 @@
 import os
 import csv
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from supabase import create_client
-
-
+ 
+ 
 def download_csv_with_curl(
     url: str,
     output_file: str,
@@ -21,9 +21,9 @@ def download_csv_with_curl(
         params.append(f"sdt={sdt.replace(' ', '%20')}")
     if edt:
         params.append(f"edt={edt.replace(' ', '%20')}")
-
+ 
     full_url = f"{url}?{'&'.join(params)}"
-
+ 
     cmd = [
         "curl",
         "-L",
@@ -31,12 +31,12 @@ def download_csv_with_curl(
         full_url,
         "-o", output_file,
     ]
-
+ 
     print("Downloading from:", full_url)
     subprocess.run(cmd, check=True)
     return output_file
-
-
+ 
+ 
 def parse_csv(path: str) -> list[dict]:
     rows = []
     with open(path, newline="", encoding="utf-8", errors="replace") as f:
@@ -44,12 +44,13 @@ def parse_csv(path: str) -> list[dict]:
         for row in reader:
             rows.append(row)
     return rows
-
-
+ 
+ 
 def chunked(items, size=500):
     for i in range(0, len(items), size):
         yield items[i:i + size]
-
+ 
+ 
 def dedupe_payload(records, key_fields=("deployment_id", "time_stamp"), ts_key="measured_at"):
     """Deduplicate on the upsert conflict key, keeping the newest row by measured_at.
  
@@ -69,6 +70,8 @@ def dedupe_payload(records, key_fields=("deployment_id", "time_stamp"), ts_key="
             dropped += 1
     print(f"Dedupe: {len(records)} -> {len(seen)} rows ({dropped} duplicates removed)")
     return list(seen.values())
+ 
+ 
 
 def main():
     simba_url = "https://simba.sams-enterprise.com/data/include/archive.php"
