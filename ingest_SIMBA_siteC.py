@@ -139,7 +139,7 @@ def main():
     payload_rows = []
     for row in rows:
         payload_rows.append({
-            "deployment_id": "SiteA",
+            "deployment_id": "SiteC",
             "time_stamp": row.get("MOMSN"),
             "measured_at": row.get("Send Time"),
             "filename": os.path.basename(output_file),
@@ -159,7 +159,7 @@ def main():
     for i, batch in enumerate(chunked(payload_rows, 500), start=1):
         result = (
             supabase
-            .table("SIMBA_SiteA")
+            .table("SIMBA_SiteC")
             .upsert(batch, on_conflict="deployment_id,time_stamp")
             .execute()
         )
